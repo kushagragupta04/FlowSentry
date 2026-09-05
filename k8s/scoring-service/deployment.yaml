@@ -1,0 +1,146 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scoring-service
+  namespace: fraudguard
+  labels:
+    app: scoring-service
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: scoring-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0      # Never take a pod below minAvailable during rolling update
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: scoring-service
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8002"
+        prometheus.io/path: "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: scoring-service
+          image: fraudguard/scoring-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+            - name: metrics
+              containerPort: 8002
+
+          # ── Resource requests tuned from load test data ──────
+          # Measured under 5k TPS sustained load:
+          #   CPU: p95 = 180m, p99 = 220m
+          #   Memory: p95 = 310Mi (includes XGBoost model in RAM)
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "384Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                secretKeyRef:
+                  name: fraudguard-secrets
+                  key: kafka-bootstrap-servers
+            - name: SCHEMA_REGISTRY_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: fraudguard-config
+                  key: schema-registry-url
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: fraudguard-secrets
+                  key: redis-url
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: fraudguard-secrets
+                  key: database-url
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: fraudguard-secrets
+                  key: groq-api-key
+            - name: THRESHOLD_FLAG
+              valueFrom:
+                configMapKeyRef:
+                  name: fraudguard-config
+                  key: threshold-flag
+            - name: THRESHOLD_BLOCK
+              valueFrom:
+                configMapKeyRef:
+                  name: fraudguard-config
+                  key: threshold-block
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector:4317"
+            - name: OTEL_SERVICE_NAME
+              value: "scoring-service"
+
+          # ── Liveness probe ───────────────────────────────────
+          # Checks only: is the process responsive?
+          # Does NOT check Redis/Kafka — those are readiness concerns.
+          # A failed liveness probe triggers a pod restart.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
+
+          # ── Readiness probe ──────────────────────────────────
+          # Checks: Redis connected + model loaded
+          # A failed readiness probe removes the pod from the Service
+          # endpoints (no traffic) but does NOT restart the pod.
+          # This prevents a Redis-disconnected pod from receiving requests.
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 2
+            timeoutSeconds: 3
+
+          # ── Startup probe ────────────────────────────────────
+          # Gives the pod extra time to load the XGBoost model on startup
+          # before the liveness probe kicks in.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            failureThreshold: 10
+            periodSeconds: 5
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scoring-service
+  namespace: fraudguard
+spec:
+  selector:
+    app: scoring-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+    - name: metrics
+      port: 8002
+      targetPort: 8002
+  type: ClusterIP

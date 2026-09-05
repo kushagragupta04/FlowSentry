@@ -1,0 +1,130 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scoring-service
+  namespace: fraudguard
+  labels:
+    app: scoring-service
+    platform: gke
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: scoring-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: scoring-service
+        platform: gke
+      annotations:
+        # GCP Google Cloud Managed Service for Prometheus (GMP) scraping config
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8002"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: fraudguard-gke-sa # Workload Identity service account
+      containers:
+        - name: scoring-service
+          # GCR / Artifact Registry location
+          image: us-docker.pkg.dev/my-gcp-project/fraudguard-repo/scoring-service:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+            - name: metrics
+              containerPort: 8002
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "384Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                secretKeyRef:
+                  name: fraudguard-secrets
+                  key: kafka-bootstrap-servers
+            - name: SCHEMA_REGISTRY_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: fraudguard-config
+                  key: schema-registry-url
+            - name: REDIS_URL
+              value: "redis://redis-master.fraudguard.svc.cluster.local:6379/0" # Redis cluster DNS
+            # Connects to Cloud SQL via localhost proxy sidecar
+            - name: DATABASE_URL
+              value: "postgresql://fraudguard:secret@127.0.0.1:5432/fraudguard"
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: fraudguard-secrets
+                  key: groq-api-key
+            - name: THRESHOLD_FLAG
+              value: "0.30"
+            - name: THRESHOLD_BLOCK
+              value: "0.70"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.observability.svc.cluster.local:4317"
+            - name: OTEL_SERVICE_NAME
+              value: "scoring-service"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            failureThreshold: 10
+            periodSeconds: 5
+
+        # Cloud SQL Auth Proxy sidecar for secure Postgres connection in GCP
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.8.1
+          args:
+            - "--structured-logs"
+            - "--port=5432"
+            # Replace instance-connection-name with actual Cloud SQL instance
+            - "my-gcp-project:us-central1:fraudguard-db"
+          securityContext:
+            runAsNonRoot: true
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scoring-service
+  namespace: fraudguard
+spec:
+  selector:
+    app: scoring-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+    - name: metrics
+      port: 8002
+      targetPort: 8002
+  type: ClusterIP

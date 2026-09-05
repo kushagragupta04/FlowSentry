@@ -1,0 +1,63 @@
+{
+  "type": "record",
+  "name": "Transaction",
+  "namespace": "com.fraudguard.v1",
+  "doc": "Financial transaction event. account_id is used as the Kafka partition key for per-account ordering guarantees.",
+  "fields": [
+    {
+      "name": "transaction_id",
+      "type": "string",
+      "doc": "UUID v4 of the transaction — globally unique"
+    },
+    {
+      "name": "account_id",
+      "type": "string",
+      "doc": "Account identifier, used as Kafka partition key to guarantee per-account event ordering"
+    },
+    {
+      "name": "amount",
+      "type": "double",
+      "doc": "Transaction amount in USD (positive)"
+    },
+    {
+      "name": "merchant_id",
+      "type": "string",
+      "doc": "Merchant identifier (hashed or pseudonymized in production)"
+    },
+    {
+      "name": "device_fingerprint",
+      "type": "string",
+      "doc": "Device fingerprint hash — SHA-256 of browser/device attributes"
+    },
+    {
+      "name": "geo_location",
+      "type": {
+        "type": "record",
+        "name": "GeoLocation",
+        "namespace": "com.fraudguard.v1",
+        "doc": "Geographic coordinates and country of the transaction origin",
+        "fields": [
+          {"name": "lat", "type": "double", "doc": "Latitude (-90 to 90)"},
+          {"name": "lon", "type": "double", "doc": "Longitude (-180 to 180)"},
+          {"name": "country", "type": "string", "doc": "ISO 3166-1 alpha-2 country code"},
+          {"name": "city", "type": "string", "doc": "City name or 'Unknown'"}
+        ]
+      }
+    },
+    {
+      "name": "timestamp_ms",
+      "type": {"type": "long", "logicalType": "timestamp-millis"},
+      "doc": "Event time: milliseconds since Unix epoch (UTC)"
+    },
+    {
+      "name": "billing_country",
+      "type": "string",
+      "doc": "ISO 3166-1 alpha-2 country code of the billing address"
+    },
+    {
+      "name": "shipping_country",
+      "type": "string",
+      "doc": "ISO 3166-1 alpha-2 country code of the shipping address"
+    }
+  ]
+}

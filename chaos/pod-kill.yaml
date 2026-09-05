@@ -1,0 +1,68 @@
+# =============================================================
+# LitmusChaos PodDelete experiment — Consumer pod kill test
+#
+# Chaos scenario:
+#   1. Start sustained load at 5k TPS
+#   2. This experiment kills one scoring-service pod
+#   3. Verify:
+#      a. Zero event loss (Kafka committed offsets account for all events)
+#      b. Lag recovery time (graphed in Grafana)
+#      c. At-least-once processing (no skipped transactions)
+#
+# Pre-requisites:
+#   kubectl apply -f https://litmuschaos.github.io/litmus/litmus-operator-v2.14.0.yaml
+#   kubectl apply -f https://hub.litmuschaos.io/api/chart/generic/pod-delete/experiment.yaml -n fraudguard
+#
+# Verify zero event loss after the experiment:
+#   rpk group describe scoring-service-cg -X brokers=localhost:19092
+#   Compare LOG-END-OFFSET - CURRENT-OFFSET before and after.
+# =============================================================
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata:
+  name: scoring-service-pod-kill
+  namespace: fraudguard
+spec:
+  appinfo:
+    appns: fraudguard
+    applabel: "app=scoring-service"
+    appkind: deployment
+
+  # RBAC for chaos runner
+  chaosServiceAccount: litmus-admin
+
+  experiments:
+    - name: pod-delete
+      spec:
+        components:
+          env:
+            # Kill exactly 1 pod
+            - name: TOTAL_CHAOS_DURATION
+              value: "30"          # Experiment runs for 30 seconds
+            - name: CHAOS_INTERVAL
+              value: "10"          # Kill a pod every 10 seconds
+            - name: FORCE
+              value: "false"       # Graceful shutdown (SIGTERM) first
+            - name: PODS_AFFECTED_PERC
+              value: "50"          # Kill 50% of pods (1 of 2 baseline replicas)
+
+        # Steady-state hypothesis:
+        # Before and after the experiment, the scoring service should:
+        #   1. Return HTTP 200 to health checks
+        #   2. Have Kafka consumer lag < 10,000
+        probe:
+          - name: scoring-service-health-probe
+            type: httpProbe
+            httpProbe/inputs:
+              url: http://scoring-service/health
+              insecureSkipVerify: false
+              responseTimeout: 5000
+              method:
+                get:
+                  criteria: "=="
+                  responseCode: "200"
+            mode: Continuous
+            runProperties:
+              probeTimeout: 5s
+              interval: 5s
+              retry: 3

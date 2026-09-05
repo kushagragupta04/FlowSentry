@@ -1,0 +1,26 @@
+# =============================================================
+# PodDisruptionBudget for scoring-service
+#
+# Guarantees that at least 2 replicas remain available during:
+#   - Rolling updates (kubectl rollout restart)
+#   - Node drains (kubectl drain)
+#   - Cluster upgrades
+#
+# At 2 minAvailable replicas, a voluntary disruption on a 3-replica
+# deployment (HPA scaled to 3) can remove at most 1 pod.
+# For a 2-replica base deployment, NO pods can be voluntarily removed
+# until the disruption controller determines 2 are available.
+#
+# This prevents the common failure mode: a rolling deploy starts,
+# takes a pod down, the remaining pod is overwhelmed by lag, latency spikes.
+# =============================================================
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: scoring-service-pdb
+  namespace: fraudguard
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: scoring-service

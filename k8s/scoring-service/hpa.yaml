@@ -1,0 +1,63 @@
+# =============================================================
+# HPA driven by Kafka consumer lag (NOT CPU)
+#
+# Why lag-based HPA instead of CPU?
+#   CPU is a lagging indicator for I/O-bound consumers like the scoring
+#   service. The scoring service spends most of its time waiting on Redis
+#   and Postgres — CPU stays low even when it's overwhelmed with messages.
+#   Kafka consumer lag directly measures the backlog. When lag exceeds
+#   the target, it means the service isn't keeping up and needs more replicas.
+#
+# How it works:
+#   1. Kafka Exporter exposes kafka_consumergroup_lag metric to Prometheus
+#   2. prometheus-adapter exposes this as a Kubernetes Custom Metric
+#   3. HPA polls the Custom Metrics API and scales when lag > targetAverageValue
+#
+# Metric: kafka_consumergroup_lag{consumergroup="scoring-service-cg", topic="transactions"}
+# Target: 1000 messages of average lag per replica
+#   → At 2 replicas, HPA triggers scale-out when total lag > 2000
+#   → At 5k TPS, 1000 messages lag = ~200ms processing backlog (acceptable)
+# =============================================================
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: scoring-service-hpa
+  namespace: fraudguard
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: scoring-service
+
+  minReplicas: 2      # Always 2 for availability (matches PDB minAvailable)
+  maxReplicas: 20     # Allows handling 5x spike (25k TPS = 5 × 5k TPS ÷ parallelism)
+
+  metrics:
+    # ── Primary metric: Kafka consumer lag ────────────────────
+    - type: External
+      external:
+        metric:
+          name: kafka_consumergroup_lag
+          selector:
+            matchLabels:
+              consumergroup: "scoring-service-cg"
+              topic: "transactions"
+        target:
+          type: AverageValue
+          averageValue: "1000"   # Scale when avg lag per replica > 1000 messages
+
+  behavior:
+    scaleUp:
+      # Scale up quickly when lag spikes — don't wait
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 4
+          periodSeconds: 60    # Add up to 4 pods per minute during scale-up
+    scaleDown:
+      # Scale down slowly — don't thrash when a spike ends
+      stabilizationWindowSeconds: 300   # Wait 5 minutes before scaling down
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 120   # Remove at most 2 pods per 2 minutes

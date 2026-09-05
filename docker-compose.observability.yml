@@ -1,0 +1,122 @@
+# =============================================================
+# docker-compose.observability.yml
+# Observability stack: Prometheus + Grafana + Alertmanager + Jaeger + OTel
+# Run: docker compose -f docker-compose.yml -f docker-compose.observability.yml up
+# =============================================================
+
+services:
+
+  # ── Prometheus ────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.2
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    networks:
+      - fraudguard
+    restart: unless-stopped
+
+  # ── Grafana ───────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-fraudguard_grafana}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_FEATURE_TOGGLES_ENABLE: publicDashboards
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    networks:
+      - fraudguard
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # ── Alertmanager ──────────────────────────────────────────────
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    networks:
+      - fraudguard
+    restart: unless-stopped
+
+  # ── Jaeger (distributed tracing) ─────────────────────────────
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    container_name: jaeger
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "14250:14250"   # OTLP gRPC
+      - "4317:4317"     # OTLP gRPC (collector)
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    networks:
+      - fraudguard
+    restart: unless-stopped
+
+  # ── OpenTelemetry Collector ───────────────────────────────────
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.100.0
+    container_name: otel-collector
+    ports:
+      - "4318:4318"     # OTLP HTTP
+    volumes:
+      - ./observability/otel/otel-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    networks:
+      - fraudguard
+    depends_on:
+      - jaeger
+    restart: unless-stopped
+
+  # ── Redis Exporter ────────────────────────────────────────────
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.59.0
+    container_name: redis-exporter
+    ports:
+      - "9121:9121"
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    networks:
+      - fraudguard
+    depends_on:
+      - redis
+
+  # ── Postgres Exporter ─────────────────────────────────────────
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: postgres-exporter
+    ports:
+      - "9187:9187"
+    environment:
+      DATA_SOURCE_NAME: postgresql://fraudguard:${POSTGRES_PASSWORD:-fraudguard_secret}@postgres:5432/fraudguard?sslmode=disable
+    networks:
+      - fraudguard
+    depends_on:
+      - postgres
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  fraudguard:
+    external: true
+    name: fraudguard

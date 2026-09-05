@@ -1,0 +1,63 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'fraudguard-local'
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+scrape_configs:
+
+  # ── Redpanda Kafka metrics ─────────────────────────────────
+  - job_name: 'redpanda'
+    static_configs:
+      - targets: ['redpanda:9644']
+    metrics_path: /public_metrics
+
+  # ── Scoring service ─────────────────────────────────────────
+  - job_name: 'scoring-service'
+    static_configs:
+      - targets: ['scoring-service:8002']
+    metrics_path: /metrics
+
+  # ── Producer ────────────────────────────────────────────────
+  - job_name: 'producer'
+    static_configs:
+      - targets: ['producer:8001']
+    metrics_path: /metrics
+
+  # ── LLM worker ──────────────────────────────────────────────
+  - job_name: 'llm-worker'
+    static_configs:
+      - targets: ['llm-worker:8003']
+    metrics_path: /metrics
+
+  # ── Redis ───────────────────────────────────────────────────
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  # ── PostgreSQL ──────────────────────────────────────────────
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  # ── Flink ───────────────────────────────────────────────────
+  - job_name: 'flink-jobmanager'
+    static_configs:
+      - targets: ['flink-jobmanager:9249']
+
+  - job_name: 'flink-taskmanager'
+    static_configs:
+      - targets: ['flink-taskmanager:9249']
+
+  # ── Prometheus self-monitoring ────────────────────────────
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

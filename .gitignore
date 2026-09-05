@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+.pytest_cache/
+
+# Environment
+.env
+!.env.example
+
+# Model artifacts (large files — use DVC or object storage in production)
+scoring-service/model/model.pkl
+scoring-service/model/data/
+scoring-service/model/evaluation_metrics.json
+load-testing/results/
+
+# Node.js
+node_modules/
+.next/
+analyst-dashboard/.next/
+analyst-dashboard/node_modules/
+
+# Docker
+.docker/
+
+# IDE
+.idea/
+.vscode/settings.json
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kubernetes secrets (never commit)
+k8s/secrets/
+*.secret.yaml
+
+# Grafana auto-generated
+observability/grafana/dashboards/*.json.bak

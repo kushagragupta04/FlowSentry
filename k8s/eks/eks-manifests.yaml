@@ -1,0 +1,168 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scoring-service
+  namespace: fraudguard
+  labels:
+    app: scoring-service
+    platform: eks
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: scoring-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: scoring-service
+        platform: eks
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8002"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: fraudguard-eks-sa # IAM Roles for Service Accounts (IRSA)
+      containers:
+        - name: scoring-service
+          # AWS Elastic Container Registry (ECR) path
+          image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/fraudguard/scoring-service:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+            - name: metrics
+              containerPort: 8002
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "384Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                secretKeyRef:
+                  name: fraudguard-secrets
+                  key: kafka-bootstrap-servers
+            - name: SCHEMA_REGISTRY_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: fraudguard-config
+                  key: schema-registry-url
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: fraudguard-secrets
+                  key: redis-url
+            # AWS RDS connection string, secret mapped via Secrets Store CSI Driver
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: fraudguard-db-secrets
+                  key: database-url
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: fraudguard-secrets
+                  key: groq-api-key
+            - name: THRESHOLD_FLAG
+              value: "0.30"
+            - name: THRESHOLD_BLOCK
+              value: "0.70"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.observability.svc.cluster.local:4317"
+            - name: OTEL_SERVICE_NAME
+              value: "scoring-service"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            failureThreshold: 10
+            periodSeconds: 5
+          volumeMounts:
+            - name: secrets-store-inline
+              mountPath: "/mnt/secrets-store"
+              readOnly: true
+
+      volumes:
+        # Mount AWS Secrets Store CSI Volume
+        - name: secrets-store-inline
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: "fraudguard-aws-secrets"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scoring-service
+  namespace: fraudguard
+spec:
+  selector:
+    app: scoring-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+    - name: metrics
+      port: 8002
+      targetPort: 8002
+  type: ClusterIP
+
+---
+# AWS Secrets Manager SecretProviderClass
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: fraudguard-aws-secrets
+  namespace: fraudguard
+spec:
+  provider: aws
+  parameters:
+    objects: |
+      - objectName: "fraudguard/production/secrets"
+        objectType: "secretsmanager"
+        jmesPath:
+          - path: "database_url"
+            objectAlias: "database-url"
+          - path: "groq_api_key"
+            objectAlias: "groq-api-key"
+          - path: "kafka_bootstrap_servers"
+            objectAlias: "kafka-bootstrap-servers"
+          - path: "redis_url"
+            objectAlias: "redis-url"
+  secretObjects:
+    - secretName: fraudguard-db-secrets
+      type: Opaque
+      data:
+        - objectName: "database-url"
+          key: database-url
+    - secretName: fraudguard-secrets
+      type: Opaque
+      data:
+        - objectName: "groq-api-key"
+          key: groq-api-key
+        - objectName: "kafka-bootstrap-servers"
+          key: kafka-bootstrap-servers
+        - objectName: "redis-url"
+          key: redis-url

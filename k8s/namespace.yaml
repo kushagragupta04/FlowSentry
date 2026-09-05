@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fraudguard
+  labels:
+    name: fraudguard
+    managed-by: kubectl
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fraudguard-config
+  namespace: fraudguard
+data:
+  schema-registry-url: "http://schema-registry:8081"
+  transactions-topic: "transactions"
+  flagged-events-topic: "flagged-events"
+  threshold-flag: "0.30"
+  threshold-block: "0.70"
+  rule-max-countries-10min: "3"
+  rule-country-mismatch-min-amount: "500.0"

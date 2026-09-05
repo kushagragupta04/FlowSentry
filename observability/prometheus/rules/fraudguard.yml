@@ -1,0 +1,99 @@
+groups:
+  - name: fraudguard-slo
+    interval: 30s
+    rules:
+
+      # ── Alert 1: Kafka consumer lag high ──────────────────────
+      # Triggers when the scoring-service consumer group lag has been
+      # elevated for 5+ minutes, indicating the scoring service is falling
+      # behind the transaction stream and latency SLO will be breached.
+      - alert: KafkaConsumerLagHigh
+        expr: |
+          sum by (consumergroup, topic) (
+            redpanda_kafka_consumer_group_lag{consumergroup="scoring-service-cg"}
+          ) > 10000
+        for: 5m
+        labels:
+          severity: warning
+          team: fraud-platform
+        annotations:
+          summary: "Kafka consumer lag elevated for scoring-service"
+          description: >
+            Consumer group 'scoring-service-cg' has lag > 10,000 messages on topic 'transactions'
+            for more than 5 minutes. Scoring service may not be keeping up with transaction throughput.
+            Consider scaling up scoring-service replicas.
+          runbook_url: "https://wiki.internal/fraudguard/runbooks/kafka-lag"
+
+      # ── Alert 2: Synchronous path p99 latency exceeded ────────
+      # Fires when the scoring service p99 latency has been above 100ms
+      # for 2+ minutes. This is the core SLO breach alert.
+      - alert: ScoringLatencyP99High
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum(rate(scoring_request_duration_seconds_bucket[2m])) by (le)
+          ) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+          team: fraud-platform
+        annotations:
+          summary: "Scoring service p99 latency > 100ms (SLO breach)"
+          description: >
+            The scoring service p99 end-to-end latency has exceeded the 100ms SLO target
+            for more than 2 minutes. Check Redis connection health, model inference time,
+            and Postgres write performance. See Jaeger traces for per-stage breakdown.
+          runbook_url: "https://wiki.internal/fraudguard/runbooks/latency-slo"
+
+      # ── Alert 3: LLM worker error rate high ───────────────────
+      # Fires when the LLM worker Groq API error rate exceeds 5%.
+      # The async investigation path should not affect scoring, but
+      # high error rates mean fraud analysts won't see investigation notes.
+      - alert: LLMWorkerErrorRateHigh
+        expr: |
+          rate(llm_worker_calls_total{status="error"}[5m])
+          /
+          (rate(llm_worker_calls_total[5m]) + 0.001)
+          > 0.05
+        for: 1m
+        labels:
+          severity: warning
+          team: fraud-platform
+        annotations:
+          summary: "LLM worker Groq API error rate > 5%"
+          description: >
+            The LLM investigation worker is experiencing > 5% error rate on Groq API calls.
+            Fraud analysts may not receive investigation notes for flagged transactions.
+            Check Groq API key validity and rate limits. Messages are being retried and
+            sent to the DLQ after 3 failures.
+          runbook_url: "https://wiki.internal/fraudguard/runbooks/llm-worker"
+
+      # ── Alert 4: Redis connection failures (supporting alert) ──
+      - alert: RedisConnectionErrors
+        expr: |
+          rate(scoring_redis_hits_total[5m]) == 0
+          and on() (time() > 60)
+        for: 2m
+        labels:
+          severity: warning
+          team: fraud-platform
+        annotations:
+          summary: "Redis feature store returning no hits — possible connection failure"
+          description: >
+            The scoring service has made zero Redis lookups in the last 5 minutes.
+            If traffic is flowing, this likely indicates a Redis connectivity issue.
+            Scoring will degrade to heuristic-only mode (higher false-negative rate).
+
+      # ── Alert 5: Dead-letter queue growing ─────────────────────
+      - alert: LLMWorkerDLQGrowing
+        expr: |
+          rate(llm_worker_dlq_total[10m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+          team: fraud-platform
+        annotations:
+          summary: "LLM worker DLQ receiving messages at elevated rate"
+          description: >
+            More than 1 message per minute is being sent to the LLM worker dead-letter queue.
+            Review DLQ messages in the llm_worker_dlq Postgres table to diagnose the failure.

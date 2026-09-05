@@ -1,0 +1,27 @@
+{
+  "name": "analyst-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001"
+  },
+  "dependencies": {
+    "next": "14.2.3",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "swr": "2.2.5",
+    "@tanstack/react-query": "5.40.0",
+    "axios": "1.7.2",
+    "recharts": "2.12.7",
+    "date-fns": "3.6.0",
+    "lucide-react": "0.395.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.2",
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.0",
+    "typescript": "5.4.5"
+  }
+}

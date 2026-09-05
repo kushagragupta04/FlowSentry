@@ -1,0 +1,7 @@
+scoring-service/model/data/
+.git/
+analyst-dashboard/node_modules/
+analyst-dashboard/.next/
+__pycache__/
+*.pyc
+.pytest_cache/

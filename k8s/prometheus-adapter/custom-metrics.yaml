@@ -1,0 +1,23 @@
+# =============================================================
+# prometheus-adapter custom metrics configuration
+#
+# Exposes kafka_consumergroup_lag from Prometheus as a
+# Kubernetes External Metric, consumed by the HPA.
+#
+# Install prometheus-adapter:
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm install prometheus-adapter prometheus-community/prometheus-adapter \
+#     --namespace monitoring \
+#     -f k8s/prometheus-adapter/values.yaml
+# =============================================================
+rules:
+  external:
+    - seriesQuery: 'kafka_consumergroup_lag{consumergroup!="",topic!=""}'
+      resources:
+        overrides:
+          namespace:
+            resource: namespace
+      name:
+        matches: "kafka_consumergroup_lag"
+        as: "kafka_consumergroup_lag"
+      metricsQuery: 'sum(<<.Series>>{<<.LabelMatchers>>}) by (consumergroup, topic)'
